@@ -105,9 +105,12 @@ router.post('/', requireRole('SELLER'), async (req, res) => {
         assignment.sold_at = new Date();
         await assignment.save();
 
-        // Mettre à jour le produit
-        product.status = 'vendu';
-        await product.save();
+        // Mettre à jour le statut du produit seulement si tout le stock est épuisé
+        const newSoldCount = soldCount + 1;
+        if (newSoldCount >= product.stock_quantity) {
+            product.status = 'vendu';
+            await product.save();
+        }
 
         return res.status(201).json({
             ...sale.toJSON(),
