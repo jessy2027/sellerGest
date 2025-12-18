@@ -67,13 +67,21 @@ router.post('/', requireRole('SELLER'), async (req, res) => {
             return res.status(400).json({ error: 'Ce produit est déjà vendu' });
         }
 
-        // Vérifier le stock disponible
+        // Vérifier le stock disponible en comptant les ventes existantes
         const product = assignment.Product;
-        const soldCount = await ProductAssignment.count({
-            where: { product_id: product.id, status: 'vendu' }
+        const soldSalesCount = await Sale.count({
+            where: {
+                assignment_id: {
+                    [Op.in]: await ProductAssignment.findAll({
+                        where: { product_id: product.id },
+                        attributes: ['id']
+                    }).then(assignments => assignments.map(a => a.id))
+                },
+                status: { [Op.ne]: 'cancelled' }
+            }
         });
 
-        if (soldCount >= product.stock_quantity) {
+        if (soldSalesCount >= product.stock_quantity) {
             return res.status(400).json({
                 error: 'Stock épuisé ! Il n\'y a plus d\'articles disponibles à vendre pour ce produit.'
             });
@@ -100,13 +108,13 @@ router.post('/', requireRole('SELLER'), async (req, res) => {
             sold_at: new Date()
         });
 
-        // Mettre à jour l'assignation
-        assignment.status = 'vendu';
-        assignment.sold_at = new Date();
+        // Mettre à jour l'assignation (On laisse 'en_vente' pour permettre d'autres ventes)
+        // assignment.status = 'vendu'; // On ne change plus le statut ici
+        assignment.sold_at = new Date(); // Optionnel: garde la trace de la dernière vente
         await assignment.save();
 
         // Mettre à jour le statut du produit seulement si tout le stock est épuisé
-        const newSoldCount = soldCount + 1;
+        const newSoldCount = soldSalesCount + 1;
         if (newSoldCount >= product.stock_quantity) {
             product.status = 'vendu';
             await product.save();

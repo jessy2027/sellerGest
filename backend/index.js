@@ -31,7 +31,7 @@ const PORT = process.env.PORT || 4000;
 (async () => {
   try {
     await sequelize.authenticate();
-    await sequelize.sync({ alter: true }); // alter: true pour mettre à jour les tables existantes
+    await sequelize.sync();
 
     // Créer le SUPER_ADMIN s'il n'existe pas (via variables d'environnement)
     const adminEmail = process.env.ADMIN_EMAIL;
@@ -50,7 +50,14 @@ const PORT = process.env.PORT || 4000;
       console.log(`🚀 API server listening on port ${PORT}`);
     });
   } catch (err) {
-    console.error('Failed to initialize DB connection:', err.message);
+    if (err.name === 'SequelizeValidationError' || err.name === 'SequelizeUniqueConstraintError') {
+      console.error('❌ Database Validation Error:');
+      err.errors.forEach(e => {
+        console.error(`  - ${e.path}: ${e.message} (value: ${e.value})`);
+      });
+    } else {
+      console.error('Failed to initialize DB connection:', err.message);
+    }
     process.exit(1);
   }
 })();

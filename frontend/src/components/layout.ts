@@ -12,6 +12,21 @@ export function renderLayout(container: HTMLElement, content: HTMLElement) {
   const layout = document.createElement('div');
   layout.className = 'app-layout';
 
+  // Mobile Menu Toggle
+  const mobileToggle = document.createElement('button');
+  mobileToggle.className = 'mobile-menu-toggle';
+  mobileToggle.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="3" y1="12" x2="21" y2="12"/>
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  `;
+
+  // Sidebar Overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'sidebar-overlay';
+
   // Sidebar
   const sidebar = document.createElement('aside');
   sidebar.className = 'sidebar';
@@ -108,9 +123,31 @@ export function renderLayout(container: HTMLElement, content: HTMLElement) {
   main.className = 'main-content';
   main.appendChild(content);
 
+  layout.appendChild(mobileToggle);
+  layout.appendChild(overlay);
   layout.appendChild(sidebar);
   layout.appendChild(main);
   container.appendChild(layout);
+
+  // Mobile menu toggle handler
+  mobileToggle.addEventListener('click', () => {
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('active');
+  });
+
+  // Close sidebar when clicking overlay
+  overlay.addEventListener('click', () => {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('active');
+  });
+
+  // Close sidebar when navigating
+  sidebar.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      sidebar.classList.remove('open');
+      overlay.classList.remove('active');
+    });
+  });
 
   // Logout handler
   document.getElementById('logout-btn')?.addEventListener('click', () => {

@@ -1,6 +1,7 @@
 const express = require('express');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { Product, Manager, Seller, ProductAssignment, User } = require('../models');
+const { Product, Manager, Seller, ProductAssignment, User, Sale } = require('../models');
+const { Op } = require('sequelize');
 
 const router = express.Router();
 
@@ -166,12 +167,25 @@ router.post('/:id/assign', requireRole('MANAGER'), async (req, res) => {
         if (product.manager_id !== manager.id) {
             return res.status(403).json({ error: 'Vous ne pouvez assigner que vos produits' });
         }
-        // Vérifier le stock disponible
-        const soldCount = await ProductAssignment.count({
-            where: { product_id: product.id, status: 'vendu' }
+        // Vérifier si une assignation active existe déjà pour ce vendeur
+        const existingAssignment = await ProductAssignment.findOne({
+            where: { product_id: product.id, seller_id: seller_id, status: 'en_vente' }
         });
 
-        if (soldCount >= product.stock_quantity) {
+        if (existingAssignment) {
+            return res.status(400).json({ error: 'Ce produit est déjà assigné à ce vendeur' });
+        }
+
+        // Vérifier le stock disponible basé sur les ventes réelles
+        const soldSalesCount = await Sale.count({
+            include: [{
+                model: ProductAssignment,
+                where: { product_id: product.id }
+            }],
+            where: { status: { [Op.ne]: 'cancelled' } }
+        });
+
+        if (soldSalesCount >= product.stock_quantity) {
             return res.status(400).json({ error: 'Stock épuisé, impossible d\'assigner de nouveaux vendeurs' });
         }
 
@@ -249,22 +263,56 @@ router.get('/:id/stock', async (req, res) => {
         const product = await Product.findByPk(req.params.id);
         if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
 
-        const assignments = await ProductAssignment.findAll({
-            where: { product_id: product.id }
+        // Calculer les ventes réelles depuis la table Sale
+        const soldCount = await Sale.count({
+            include: [{
+                model: ProductAssignment,
+                where: { product_id: product.id }
+            }],
+            where: { status: { [Op.ne]: 'cancelled' } }
         });
 
-        const sold = assignments.filter(a => a.status === 'vendu').length;
-        const inSale = assignments.filter(a => a.status === 'en_vente').length;
+        const activeAssignmentsCount = await ProductAssignment.count({
+            where: { product_id: product.id, status: 'en_vente' }
+        });
 
         return res.json({
             total_stock: product.stock_quantity,
-            sold: sold,
-            in_sale: inSale,
-            available: product.stock_quantity - sold
+            sold: soldCount,
+            active_assignments: activeAssignmentsCount,
+            available: product.stock_quantity - soldCount
         });
     } catch (err) {
         console.error('Get product stock error:', err.message);
         return res.status(500).json({ error: 'Échec du chargement des statistiques de stock' });
+    }
+});
+
+// DELETE /products/assignments/:id - Supprimer une assignation (MANAGER only)
+router.delete('/assignments/:id', requireRole('MANAGER'), async (req, res) => {
+    try {
+        const manager = await Manager.findOne({ where: { user_id: req.user.id } });
+        if (!manager) return res.status(404).json({ error: 'Manager non trouvé' });
+
+        const assignment = await ProductAssignment.findByPk(req.params.id, {
+            include: [{ model: Product }]
+        });
+        if (!assignment) return res.status(404).json({ error: 'Assignation non trouvée' });
+
+        // Vérifier que le produit appartient au manager
+        if (assignment.Product.manager_id !== manager.id) {
+            return res.status(403).json({ error: 'Vous ne pouvez supprimer que vos assignations' });
+        }
+
+        // On peut supprimer une assignation tant que le produit n'est pas marqué 'vendu' 
+        // ou si on veut juste retirer la permission de vente future.
+        // Pour ce système, on la supprime simplement.
+        await assignment.destroy();
+
+        return res.json({ message: 'Assignation retirée' });
+    } catch (err) {
+        console.error('Delete assignment error:', err.message);
+        return res.status(500).json({ error: 'Échec de la suppression de l\'assignation' });
     }
 });
 
