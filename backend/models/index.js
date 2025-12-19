@@ -4,6 +4,8 @@ const Seller = require('./Seller');
 const Product = require('./Product');
 const ProductAssignment = require('./ProductAssignment');
 const Sale = require('./Sale');
+const Conversation = require('./Conversation');
+const Message = require('./Message');
 
 // Associations User
 Manager.belongsTo(User, { foreignKey: 'user_id' });
@@ -29,7 +31,7 @@ Seller.hasMany(ProductAssignment, { foreignKey: 'seller_id' });
 
 // Sale associations
 Sale.belongsTo(ProductAssignment, { foreignKey: 'assignment_id' });
-ProductAssignment.hasOne(Sale, { foreignKey: 'assignment_id' });
+ProductAssignment.hasMany(Sale, { foreignKey: 'assignment_id' });
 
 Sale.belongsTo(Seller, { foreignKey: 'seller_id' });
 Seller.hasMany(Sale, { foreignKey: 'seller_id' });
@@ -37,4 +39,17 @@ Seller.hasMany(Sale, { foreignKey: 'seller_id' });
 Sale.belongsTo(Manager, { foreignKey: 'manager_id' });
 Manager.hasMany(Sale, { foreignKey: 'manager_id' });
 
-module.exports = { User, Manager, Seller, Product, ProductAssignment, Sale };
+// Conversation associations
+Conversation.belongsTo(Manager, { foreignKey: 'manager_id' });
+Manager.hasMany(Conversation, { foreignKey: 'manager_id' });
+
+Conversation.belongsTo(Seller, { foreignKey: 'seller_id' });
+Seller.hasMany(Conversation, { foreignKey: 'seller_id' });
+
+// Message associations
+Message.belongsTo(Conversation, { foreignKey: 'conversation_id' });
+Conversation.hasMany(Message, { foreignKey: 'conversation_id' });
+
+Message.belongsTo(User, { foreignKey: 'sender_id', as: 'Sender' });
+
+module.exports = { User, Manager, Seller, Product, ProductAssignment, Sale, Conversation, Message };

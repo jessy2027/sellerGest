@@ -2,6 +2,7 @@ const express = require('express');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { Sale, ProductAssignment, Product, Seller, Manager, User } = require('../models');
 const { Op } = require('sequelize');
+const { getIO } = require('../socket');
 
 const router = express.Router();
 
@@ -63,8 +64,8 @@ router.post('/', requireRole('SELLER'), async (req, res) => {
         if (assignment.seller_id !== seller.id) {
             return res.status(403).json({ error: 'Ce produit ne vous est pas assigné' });
         }
-        if (assignment.status === 'vendu') {
-            return res.status(400).json({ error: 'Ce produit est déjà vendu' });
+        if (assignment.status !== 'actif') {
+            return res.status(400).json({ error: 'Ce produit n\'est plus disponible à la vente (statut: ' + assignment.status + ')' });
         }
 
         // Vérifier le stock disponible en comptant les ventes existantes
@@ -118,6 +119,19 @@ router.post('/', requireRole('SELLER'), async (req, res) => {
         if (newSoldCount >= product.stock_quantity) {
             product.status = 'vendu';
             await product.save();
+        }
+
+        // Émettre l'événement WebSocket pour mise à jour en temps réel
+        try {
+            const io = getIO();
+            io.emit('stock_updated', {
+                product_id: product.id,
+                new_stock: product.stock_quantity - newSoldCount,
+                sold_count: newSoldCount,
+                product_status: product.status
+            });
+        } catch (socketErr) {
+            console.error('Socket emit error:', socketErr.message);
         }
 
         return res.status(201).json({

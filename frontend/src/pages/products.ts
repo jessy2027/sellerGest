@@ -11,6 +11,7 @@ interface Product {
   category: string | null;
   base_price: number;
   stock_quantity: number;
+  photos_original: string[] | null;
   status: 'disponible' | 'assigne' | 'vendu';
   createdAt?: string;
   // Pour vendeurs
@@ -111,6 +112,12 @@ export function renderProducts(): HTMLElement {
 
     const categoryFilter = document.getElementById('category-filter') as HTMLSelectElement;
     categoryFilter?.addEventListener('change', () => filterProducts());
+
+    // Écouter les mises à jour de stock en temps réel
+    window.addEventListener('stock-updated', (() => {
+      console.log('📦 Reloading products due to stock update');
+      loadProducts();
+    }) as EventListener);
   }, 0);
 
   return container;
@@ -166,16 +173,27 @@ function renderProductsGrid(grid: HTMLElement) {
     return;
   }
 
-  grid.innerHTML = productsData.map(product => `
+  grid.innerHTML = productsData.map(product => {
+    const hasPhotos = product.photos_original && product.photos_original.length > 0;
+    const firstPhoto = hasPhotos ? `http://localhost:4000${product.photos_original![0]}` : null;
+
+    return `
     <div class="product-card" data-id="${product.id}" data-status="${product.status}" data-category="${product.category || ''}">
       <div class="product-image">
-        <div class="product-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
-            <line x1="3" y1="6" x2="21" y2="6"/>
-            <path d="M16 10a4 4 0 0 1-8 0"/>
-          </svg>
-        </div>
+        ${firstPhoto ? `
+          <img src="${firstPhoto}" alt="${product.title}" class="product-photo" />
+        ` : `
+          <div class="product-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <path d="M16 10a4 4 0 0 1-8 0"/>
+            </svg>
+          </div>
+        `}
+        ${hasPhotos && product.photos_original!.length > 1 ? `
+          <span class="photo-count">+${product.photos_original!.length - 1}</span>
+        ` : ''}
         <div class="product-status ${product.status}">${getStatusLabel(product.status)}</div>
       </div>
       <div class="product-content">
@@ -190,6 +208,15 @@ function renderProductsGrid(grid: HTMLElement) {
             </svg>
             Stock: ${product.stock_quantity}
           </span>
+          ${canEdit ? `
+          <button class="btn btn-ghost btn-xs" onclick="restockProduct(${product.id})" title="Restock">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <path d="M23 4v6h-6"/>
+              <path d="M1 20v-6h6"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+          ` : ''}
         </div>
         <div class="product-actions">
           ${canEdit ? `
@@ -210,22 +237,22 @@ function renderProductsGrid(grid: HTMLElement) {
             </svg>
           </button>
           ` : ''}
-          ` : isSeller && product.assignment_status === 'en_vente' ? `
+          ` : isSeller && product.assignment_status === 'actif' ? `
           <button class="btn btn-success btn-sm" onclick="markAsSold(${product.assignment_id})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="20 6 9 17 4 12"/>
             </svg>
-            Marquer vendu
+            Vendre
           </button>
           ` : `
           <span class="product-sold-label">
-            ${product.assignment_status === 'vendu' ? '✓ Vendu' : 'En attente'}
+            ${product.assignment_status === 'retiré' ? 'Retiré' : 'Actif'}
           </span>
           `}
         </div>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 }
 
 function getStatusLabel(status: string): string {
@@ -261,6 +288,7 @@ function filterProducts() {
 }
 
 function openProductModal(product?: Product) {
+  const existingPhotos = product?.photos_original || [];
   const content = document.createElement('div');
   content.innerHTML = `
     <form id="product-form" class="modal-form">
@@ -293,8 +321,37 @@ function openProductModal(product?: Product) {
       </div>
       <div class="form-group">
         <label for="description">Description</label>
-        <textarea id="description" name="description" class="form-textarea" rows="4">${product?.description || ''}</textarea>
+        <textarea id="description" name="description" class="form-textarea" rows="3">${product?.description || ''}</textarea>
       </div>
+      
+      <!-- Section Photos -->
+      <div class="form-group">
+        <label>Photos du produit</label>
+        ${existingPhotos.length > 0 ? `
+          <div class="existing-photos" id="existing-photos">
+            ${existingPhotos.map(photo => `
+              <div class="photo-item" data-photo="${photo}">
+                <img src="http://localhost:4000${photo}" alt="Photo produit">
+                <button type="button" class="photo-delete-btn" data-filename="${photo.split('/').pop()}">&times;</button>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+        <div class="upload-zone" id="upload-zone">
+          <input type="file" id="photo-input" accept="image/jpeg,image/png,image/webp" multiple hidden>
+          <div class="upload-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p>Glissez des images ici ou <span class="upload-link">cliquez pour sélectionner</span></p>
+            <small>JPEG, PNG, WebP - Max 5MB par image</small>
+          </div>
+        </div>
+        <div class="upload-preview" id="upload-preview"></div>
+      </div>
+      
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">${product ? 'Modifier' : 'Créer'}</button>
       </div>
@@ -303,6 +360,80 @@ function openProductModal(product?: Product) {
 
   const modal = createModal(product ? 'Modifier le produit' : 'Nouveau produit', content);
   document.body.appendChild(modal);
+
+  // Gérer la zone d'upload
+  const uploadZone = document.getElementById('upload-zone')!;
+  const photoInput = document.getElementById('photo-input') as HTMLInputElement;
+  const uploadPreview = document.getElementById('upload-preview')!;
+  let filesToUpload: File[] = [];
+
+  uploadZone.addEventListener('click', () => photoInput.click());
+
+  uploadZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadZone.classList.add('dragover');
+  });
+
+  uploadZone.addEventListener('dragleave', () => {
+    uploadZone.classList.remove('dragover');
+  });
+
+  uploadZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadZone.classList.remove('dragover');
+    if (e.dataTransfer?.files) {
+      handleFiles(e.dataTransfer.files);
+    }
+  });
+
+  photoInput.addEventListener('change', () => {
+    if (photoInput.files) {
+      handleFiles(photoInput.files);
+    }
+  });
+
+  function handleFiles(files: FileList) {
+    Array.from(files).forEach(file => {
+      if (file.type.startsWith('image/')) {
+        filesToUpload.push(file);
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const preview = document.createElement('div');
+          preview.className = 'preview-item';
+          preview.innerHTML = `
+            <img src="${e.target?.result}" alt="Preview">
+            <button type="button" class="preview-remove">&times;</button>
+          `;
+          preview.querySelector('.preview-remove')?.addEventListener('click', () => {
+            const index = filesToUpload.indexOf(file);
+            if (index > -1) filesToUpload.splice(index, 1);
+            preview.remove();
+          });
+          uploadPreview.appendChild(preview);
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  }
+
+  // Gérer la suppression des photos existantes
+  if (product) {
+    document.querySelectorAll('.photo-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const filename = (btn as HTMLElement).dataset.filename!;
+        if (confirm('Supprimer cette photo ?')) {
+          try {
+            await api.deleteProductPhoto(product.id, filename);
+            (btn as HTMLElement).closest('.photo-item')?.remove();
+            showToast('Photo supprimée', 'success');
+          } catch (error: any) {
+            showToast(error.message || 'Erreur', 'error');
+          }
+        }
+      });
+    });
+  }
 
   const form = document.getElementById('product-form') as HTMLFormElement;
   form.addEventListener('submit', async (e) => {
@@ -322,13 +453,27 @@ function openProductModal(product?: Product) {
     submitBtn.innerHTML = '<span class="spinner-small"></span> Sauvegarde...';
 
     try {
+      let productId: number;
       if (product) {
         await api.updateProduct(product.id, data);
+        productId = product.id;
         showToast('Produit modifié !', 'success');
       } else {
-        await api.createProduct(data);
+        const newProduct = await api.createProduct(data);
+        productId = newProduct.id;
         showToast('Produit créé !', 'success');
       }
+
+      // Upload des nouvelles photos
+      if (filesToUpload.length > 0) {
+        try {
+          await api.uploadProductPhotos(productId, filesToUpload);
+          showToast(`${filesToUpload.length} photo(s) uploadée(s) !`, 'success');
+        } catch (uploadError: any) {
+          showToast(uploadError.message || 'Erreur upload photos', 'error');
+        }
+      }
+
       modal.remove();
       loadProducts();
     } catch (error: any) {
@@ -362,51 +507,69 @@ function openProductModal(product?: Product) {
   }
 };
 
-(window as any).assignProduct = (id: number) => {
+(window as any).assignProduct = async (id: number) => {
   if (sellersData.length === 0) {
     showToast('Aucun vendeur disponible. Créez d\'abord un vendeur.', 'error');
     return;
   }
 
-  const content = document.createElement('div');
-  content.innerHTML = `
-    <form id="assign-form" class="modal-form">
-      <div class="form-group">
-        <label for="seller">Sélectionner un vendeur</label>
-        <select id="seller" name="seller" class="form-select" required>
-          <option value="">Choisir un vendeur...</option>
-          ${sellersData.map(s => `<option value="${s.id}">${s.email}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Assigner</button>
-      </div>
-    </form>
-  `;
+  try {
+    // Récupérer les détails du produit pour connaître les assignations actuelles
+    const fullProduct = await api.getProduct(id);
+    const assignedSellerIds = (fullProduct.ProductAssignments || [])
+      .filter((a: any) => a.status === 'actif')
+      .map((a: any) => a.seller_id);
 
-  const modal = createModal('Assigner le produit', content);
-  document.body.appendChild(modal);
+    const availableSellers = sellersData.filter(s => !assignedSellerIds.includes(s.id));
 
-  const form = document.getElementById('assign-form') as HTMLFormElement;
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const sellerId = parseInt((document.getElementById('seller') as HTMLSelectElement).value);
-
-    const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<span class="spinner-small"></span> Assignation...';
-
-    try {
-      await api.assignProduct(id, sellerId);
-      showToast('Produit assigné avec succès !', 'success');
-      modal.remove();
-      loadProducts();
-    } catch (error: any) {
-      showToast(error.message || 'Erreur lors de l\'assignation', 'error');
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Assigner';
+    if (availableSellers.length === 0) {
+      showToast('Ce produit est déjà assigné à tous vos vendeurs actifs.', 'info');
+      return;
     }
-  });
+
+    const content = document.createElement('div');
+    content.innerHTML = `
+      <form id="assign-form" class="modal-form">
+        <div class="form-group">
+          <label for="seller">Sélectionner un vendeur</label>
+          <select id="seller" name="seller" class="form-select" required>
+            <option value="">Choisir un vendeur...</option>
+            ${availableSellers.map(s => `<option value="${s.id}">${s.email}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Assigner</button>
+        </div>
+      </form>
+    `;
+
+    const modal = createModal('Assigner le produit', content);
+    document.body.appendChild(modal);
+
+    const form = document.getElementById('assign-form') as HTMLFormElement;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const sellerId = parseInt((document.getElementById('seller') as HTMLSelectElement).value);
+
+      const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span class="spinner-small"></span> Assignation...';
+
+      try {
+        await api.assignProduct(id, sellerId);
+        showToast('Produit assigné avec succès !', 'success');
+        modal.remove();
+        loadProducts();
+      } catch (error: any) {
+        showToast(error.message || 'Erreur lors de l\'assignation', 'error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Assigner';
+      }
+    });
+  } catch (error) {
+    console.error('Failed to load product details:', error);
+    showToast('Erreur lors du chargement des disponibilités.', 'error');
+  }
 };
 
 (window as any).markAsSold = async (assignmentId: number) => {
@@ -420,4 +583,64 @@ function openProductModal(product?: Product) {
   } catch (error: any) {
     showToast(error.message || 'Erreur lors de l\'enregistrement de la vente', 'error');
   }
+};
+
+(window as any).restockProduct = async (productId: number) => {
+  const product = productsData.find(p => p.id === productId);
+  if (!product) return;
+
+  const content = document.createElement('div');
+  content.innerHTML = `
+    <form id="restock-form" class="modal-form">
+      <div class="restock-info">
+        <p>Stock actuel: <strong>${product.stock_quantity}</strong></p>
+      </div>
+      <div class="form-group">
+        <label for="restock-qty">Quantité à ajouter</label>
+        <input type="number" id="restock-qty" name="quantity" class="form-input" min="1" value="1" required>
+      </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="restock-replace"> Remplacer le stock (au lieu d'ajouter)
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <path d="M23 4v6h-6"/>
+            <path d="M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          Mettre à jour le stock
+        </button>
+      </div>
+    </form>
+  `;
+
+  const modal = createModal(`Restock: ${product.title}`, content);
+  document.body.appendChild(modal);
+
+  const form = document.getElementById('restock-form') as HTMLFormElement;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const quantity = parseInt((document.getElementById('restock-qty') as HTMLInputElement).value);
+    const replace = (document.getElementById('restock-replace') as HTMLInputElement).checked;
+    const mode = replace ? 'set' : 'add';
+
+    const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-small"></span> Mise à jour...';
+
+    try {
+      const result = await api.restockProduct(productId, quantity, mode);
+      showToast(`Stock mis à jour ! Nouveau stock: ${result.new_stock}`, 'success');
+      modal.remove();
+      loadProducts();
+    } catch (error: any) {
+      showToast(error.message || 'Erreur lors de la mise à jour du stock', 'error');
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = 'Mettre à jour le stock';
+    }
+  });
 };

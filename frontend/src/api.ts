@@ -97,6 +97,12 @@ class ApiClient {
     return this.request<any[]>('/products/assignments/list');
   }
 
+  async unassignProduct(assignmentId: number) {
+    return this.request<void>(`/products/assignments/${assignmentId}`, {
+      method: 'DELETE',
+    });
+  }
+
   async getProductStock(productId: number) {
     return this.request<{
       total_stock: number;
@@ -104,6 +110,13 @@ class ApiClient {
       in_sale: number;
       available: number;
     }>(`/products/${productId}/stock`);
+  }
+
+  async restockProduct(productId: number, quantity: number, mode: 'add' | 'set' = 'add') {
+    return this.request<{ message: string; new_stock: number }>(`/products/${productId}/restock`, {
+      method: 'PATCH',
+      body: JSON.stringify({ quantity, mode }),
+    });
   }
 
   // Sellers - MANAGER crée ses vendeurs
@@ -201,6 +214,64 @@ class ApiClient {
   async getStats() {
     return this.request<any>('/sales/stats/summary');
   }
+
+  // Photos - Upload (multipart/form-data, pas de JSON)
+  async uploadProductPhotos(productId: number, files: FileList | File[]) {
+    const token = this.getToken();
+    const formData = new FormData();
+
+    Array.from(files).forEach(file => {
+      formData.append('photos', file);
+    });
+
+    const response = await fetch(`${API_URL}/products/${productId}/photos`, {
+      method: 'POST',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+      body: formData,
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Erreur lors de l\'upload');
+    }
+    return data;
+  }
+
+  async deleteProductPhoto(productId: number, filename: string) {
+    return this.request<{ message: string; photos: string[] }>(`/products/${productId}/photos/${filename}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Chat API
+  async getConversations() {
+    return this.request<any[]>('/chat/conversations');
+  }
+
+  async createConversation(sellerId?: number) {
+    return this.request<any>('/chat/conversations', {
+      method: 'POST',
+      body: JSON.stringify({ seller_id: sellerId }),
+    });
+  }
+
+  async getMessages(conversationId: number, limit = 50) {
+    return this.request<any[]>(`/chat/conversations/${conversationId}/messages?limit=${limit}`);
+  }
+
+  async sendMessage(conversationId: number, content: string) {
+    return this.request<any>(`/chat/messages/${conversationId}`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    });
+  }
+
+  async getUnreadCount() {
+    return this.request<{ unread: number }>('/chat/unread');
+  }
 }
 
 export const api = new ApiClient();
+

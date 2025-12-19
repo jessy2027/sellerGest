@@ -8,9 +8,9 @@ const ProductAssignment = sequelize.define(
     product_id: { type: DataTypes.INTEGER, allowNull: false },
     seller_id: { type: DataTypes.INTEGER, allowNull: false },
     status: {
-      type: DataTypes.ENUM('en_vente', 'vendu', 'probleme'),
+      type: DataTypes.ENUM('actif', 'retiré'),
       allowNull: false,
-      defaultValue: 'en_vente',
+      defaultValue: 'actif',
     },
     assigned_at: { type: DataTypes.DATE, allowNull: true },
     sold_at: { type: DataTypes.DATE, allowNull: true },

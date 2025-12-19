@@ -2,6 +2,10 @@ const express = require('express');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { Product, Manager, Seller, ProductAssignment, User, Sale } = require('../models');
 const { Op } = require('sequelize');
+const upload = require('../middleware/upload');
+const fs = require('fs');
+const path = require('path');
+const { getIO } = require('../socket');
 
 const router = express.Router();
 
@@ -167,9 +171,13 @@ router.post('/:id/assign', requireRole('MANAGER'), async (req, res) => {
         if (product.manager_id !== manager.id) {
             return res.status(403).json({ error: 'Vous ne pouvez assigner que vos produits' });
         }
+        // Vérifier le vendeur (Extraction here first)
+        const { seller_id } = req.body;
+        if (!seller_id) return res.status(400).json({ error: 'seller_id requis' });
+
         // Vérifier si une assignation active existe déjà pour ce vendeur
         const existingAssignment = await ProductAssignment.findOne({
-            where: { product_id: product.id, seller_id: seller_id, status: 'en_vente' }
+            where: { product_id: product.id, seller_id: seller_id, status: 'actif' }
         });
 
         if (existingAssignment) {
@@ -189,10 +197,6 @@ router.post('/:id/assign', requireRole('MANAGER'), async (req, res) => {
             return res.status(400).json({ error: 'Stock épuisé, impossible d\'assigner de nouveaux vendeurs' });
         }
 
-        // Vérifier le vendeur
-        const { seller_id } = req.body;
-        if (!seller_id) return res.status(400).json({ error: 'seller_id requis' });
-
 
         const seller = await Seller.findByPk(seller_id);
         if (!seller) return res.status(404).json({ error: 'Vendeur non trouvé' });
@@ -204,7 +208,7 @@ router.post('/:id/assign', requireRole('MANAGER'), async (req, res) => {
         const assignment = await ProductAssignment.create({
             product_id: product.id,
             seller_id: seller.id,
-            status: 'en_vente',
+            status: 'actif',
             assigned_at: new Date()
         });
 
@@ -273,7 +277,7 @@ router.get('/:id/stock', async (req, res) => {
         });
 
         const activeAssignmentsCount = await ProductAssignment.count({
-            where: { product_id: product.id, status: 'en_vente' }
+            where: { product_id: product.id, status: 'actif' }
         });
 
         return res.json({
@@ -304,16 +308,159 @@ router.delete('/assignments/:id', requireRole('MANAGER'), async (req, res) => {
             return res.status(403).json({ error: 'Vous ne pouvez supprimer que vos assignations' });
         }
 
-        // On peut supprimer une assignation tant que le produit n'est pas marqué 'vendu' 
-        // ou si on veut juste retirer la permission de vente future.
-        // Pour ce système, on la supprime simplement.
-        await assignment.destroy();
+        // Check if sales exist for this assignment
+        const salesCount = await Sale.count({ where: { assignment_id: assignment.id } });
 
-        return res.json({ message: 'Assignation retirée' });
+        if (salesCount > 0) {
+            // Cannot delete due to history, mark as 'retiré' (meaning Retired/Removed from active view)
+            assignment.status = 'retiré';
+            await assignment.save();
+            return res.json({ message: 'Assignation retirée (Historique conservé)' });
+        } else {
+            // Safe to delete
+            await assignment.destroy();
+            return res.json({ message: 'Assignation supprimée' });
+        }
     } catch (err) {
         console.error('Delete assignment error:', err.message);
         return res.status(500).json({ error: 'Échec de la suppression de l\'assignation' });
     }
 });
 
+// PATCH /products/:id/restock - Modifier le stock rapidement (MANAGER only)
+router.patch('/:id/restock', requireRole('MANAGER'), async (req, res) => {
+    try {
+        const manager = await Manager.findOne({ where: { user_id: req.user.id } });
+        if (!manager) return res.status(404).json({ error: 'Manager non trouvé' });
+
+        const product = await Product.findByPk(req.params.id);
+        if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
+        if (product.manager_id !== manager.id) {
+            return res.status(403).json({ error: 'Vous ne pouvez modifier que vos produits' });
+        }
+
+        const { quantity, mode } = req.body;
+        if (quantity === undefined || isNaN(parseInt(quantity))) {
+            return res.status(400).json({ error: 'Quantité requise' });
+        }
+
+        const qty = parseInt(quantity);
+
+        if (mode === 'add') {
+            // Ajouter au stock existant
+            product.stock_quantity += qty;
+        } else if (mode === 'set') {
+            // Remplacer le stock
+            product.stock_quantity = qty;
+        } else {
+            // Par défaut: ajouter
+            product.stock_quantity += qty;
+        }
+
+        if (product.stock_quantity < 0) {
+            product.stock_quantity = 0;
+        }
+
+        await product.save();
+
+        // Émettre l'événement WebSocket pour mise à jour en temps réel
+        try {
+            const io = getIO();
+            io.emit('stock_updated', {
+                product_id: product.id,
+                new_stock: product.stock_quantity,
+                product_status: product.status,
+                action: 'restock'
+            });
+        } catch (socketErr) {
+            console.error('Socket emit error:', socketErr.message);
+        }
+
+        return res.json({
+            message: 'Stock mis à jour',
+            new_stock: product.stock_quantity
+        });
+    } catch (err) {
+        console.error('Restock error:', err.message);
+        return res.status(500).json({ error: 'Échec de la mise à jour du stock' });
+    }
+});
+
+// POST /products/:id/photos - Upload des photos d'un produit (MANAGER only)
+router.post('/:id/photos', requireRole('MANAGER'), upload.array('photos', 10), async (req, res) => {
+    try {
+        const manager = await Manager.findOne({ where: { user_id: req.user.id } });
+        if (!manager) return res.status(404).json({ error: 'Manager non trouvé' });
+
+        const product = await Product.findByPk(req.params.id);
+        if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
+        if (product.manager_id !== manager.id) {
+            return res.status(403).json({ error: 'Vous ne pouvez modifier que vos produits' });
+        }
+
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ error: 'Aucun fichier uploadé' });
+        }
+
+        // Récupérer les URLs des nouvelles images
+        const newPhotos = req.files.map(file => `/uploads/products/${file.filename}`);
+
+        // Ajouter aux photos existantes
+        const existingPhotos = product.photos_original || [];
+        product.photos_original = [...existingPhotos, ...newPhotos];
+        await product.save();
+
+        return res.json({
+            message: 'Photos uploadées avec succès',
+            photos: product.photos_original
+        });
+    } catch (err) {
+        console.error('Upload photos error:', err.message);
+        return res.status(500).json({ error: 'Échec de l\'upload des photos' });
+    }
+});
+
+// DELETE /products/:id/photos/:filename - Supprimer une photo (MANAGER only)
+router.delete('/:id/photos/:filename', requireRole('MANAGER'), async (req, res) => {
+    try {
+        const manager = await Manager.findOne({ where: { user_id: req.user.id } });
+        if (!manager) return res.status(404).json({ error: 'Manager non trouvé' });
+
+        const product = await Product.findByPk(req.params.id);
+        if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
+        if (product.manager_id !== manager.id) {
+            return res.status(403).json({ error: 'Vous ne pouvez modifier que vos produits' });
+        }
+
+        const filename = req.params.filename;
+        const photoPath = `/uploads/products/${filename}`;
+
+        // Retirer de la liste des photos
+        const photos = product.photos_original || [];
+        const newPhotos = photos.filter(p => p !== photoPath);
+
+        if (photos.length === newPhotos.length) {
+            return res.status(404).json({ error: 'Photo non trouvée' });
+        }
+
+        product.photos_original = newPhotos;
+        await product.save();
+
+        // Supprimer le fichier physique
+        const filePath = path.join(__dirname, '..', 'uploads', 'products', filename);
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
+        return res.json({
+            message: 'Photo supprimée',
+            photos: product.photos_original
+        });
+    } catch (err) {
+        console.error('Delete photo error:', err.message);
+        return res.status(500).json({ error: 'Échec de la suppression de la photo' });
+    }
+});
+
 module.exports = router;
+

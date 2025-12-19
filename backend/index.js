@@ -1,22 +1,34 @@
-// index.js - Production Mode
+// index.js - Production Mode with Socket.io
 const express = require('express');
+const http = require('http');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const { sequelize } = require('./config/db');
 const User = require('./models/User');
+const { initSocket } = require('./socket');
 
 // Charger les associations
 require('./models/index');
 
+const path = require('path');
+
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+
+// Initialiser Socket.io
+initSocket(server);
+
 app.use(cors());
 app.use(express.json());
 
+// Servir les fichiers uploadés
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', mode: 'production' });
+  res.json({ status: 'ok', mode: 'production', websocket: true });
 });
 
 // Routes
@@ -25,6 +37,7 @@ app.use('/api/managers', require('./routes/managers'));
 app.use('/api/sellers', require('./routes/sellers'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/sales', require('./routes/sales'));
+app.use('/api/chat', require('./routes/chat'));
 
 const PORT = process.env.PORT || 4000;
 
@@ -46,8 +59,9 @@ const PORT = process.env.PORT || 4000;
       }
     }
 
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`🚀 API server listening on port ${PORT}`);
+      console.log(`🔌 WebSocket server ready`);
     });
   } catch (err) {
     if (err.name === 'SequelizeValidationError' || err.name === 'SequelizeUniqueConstraintError') {

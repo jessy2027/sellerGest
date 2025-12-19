@@ -113,3 +113,26 @@ export interface AppState {
   token: string | null;
   isAuthenticated: boolean;
 }
+
+// Chat types
+export interface Conversation {
+  id: number;
+  manager_id: number;
+  seller_id: number;
+  last_message_at: string | null;
+  Manager?: { id: number; User: { id: number; email: string } };
+  Seller?: { id: number; User: { id: number; email: string } };
+  Messages?: Message[];
+  unread_count?: number;
+}
+
+export interface Message {
+  id: number;
+  conversation_id: number;
+  sender_id: number;
+  content: string;
+  read_at: string | null;
+  createdAt: string;
+  Sender?: { id: number; email: string };
+}
+

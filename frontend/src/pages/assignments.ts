@@ -8,7 +8,7 @@ interface Assignment {
   id: number;
   product_id: number;
   seller_id: number;
-  status: 'en_vente' | 'vendu' | 'probleme';
+  status: 'actif' | 'retiré';
   assigned_at: string | null;
   sold_at: string | null;
   Product?: {
@@ -56,9 +56,8 @@ export function renderAssignments(): HTMLElement {
       <div class="filter-group">
         <select id="status-filter" class="form-select">
           <option value="">Tous les statuts</option>
-          <option value="en_vente">En vente</option>
-          <option value="vendu">Vendu</option>
-          <option value="probleme">Problème</option>
+          <option value="actif">Actif</option>
+          <option value="retiré">Retiré</option>
         </select>
       </div>
     </div>
@@ -80,6 +79,12 @@ export function renderAssignments(): HTMLElement {
 
     const searchInput = document.getElementById('search-input') as HTMLInputElement;
     searchInput?.addEventListener('input', () => filterAssignments());
+
+    // Écouter les mises à jour de stock en temps réel
+    window.addEventListener('stock-updated', (() => {
+      console.log('📦 Reloading assignments due to stock update');
+      loadAssignments();
+    }) as EventListener);
   }, 0);
 
   return container;
@@ -161,19 +166,27 @@ function renderAssignmentsTable(container: HTMLElement) {
             <td>${a.assigned_at ? formatDate(a.assigned_at) : '-'}</td>
             <td>
               <div class="table-actions">
-                ${isSeller && a.status === 'en_vente' ? `
-                <button class="btn btn-success btn-sm" onclick="markAssignmentSold(${a.id})" title="Marquer comme vendu">
+                ${!isSeller ? `
+                <button class="btn btn-ghost btn-sm btn-danger" onclick="unassignProduct(${a.id})" title="Retirer l'assignation">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="20 6 9 17 4 12"/>
+                    <path d="M18 6L6 18M6 6l12 12"/>
                   </svg>
-                  Vendu
+                  Retirer
                 </button>
-                ` : a.status === 'vendu' ? `
-                <span class="sold-badge">
+                ` : ''}
+                ${isSeller && a.status === 'actif' ? `
+                <button class="btn btn-success btn-sm" onclick="markAssignmentSold(${a.id})" title="Enregistrer une vente">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="20 6 9 17 4 12"/>
                   </svg>
-                  Vendu ${a.sold_at ? 'le ' + formatDate(a.sold_at) : ''}
+                  Vendre
+                </button>
+                ` : a.status === 'retiré' ? `
+                <span class="sold-badge retired-badge">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                  Assignation retirée
                 </span>
                 ` : ''}
               </div>
@@ -187,9 +200,8 @@ function renderAssignmentsTable(container: HTMLElement) {
 
 function getStatusLabel(status: string): string {
   const labels: Record<string, string> = {
-    'en_vente': 'En vente',
-    'vendu': 'Vendu',
-    'probleme': 'Problème',
+    'actif': 'Actif',
+    'retiré': 'Retiré',
   };
   return labels[status] || status;
 }
@@ -226,5 +238,17 @@ function filterAssignments() {
     window.location.hash = '/sales';
   } catch (error: any) {
     showToast(error.message || 'Erreur lors de l\'enregistrement', 'error');
+  }
+};
+(window as any).unassignProduct = async (id: number) => {
+  if (!confirm('Voulez-vous vraiment retirer cette assignation ?')) return;
+
+  try {
+    await api.unassignProduct(id);
+    showToast('Assignation retirée !', 'success');
+    // Recharger les assignations
+    loadAssignments();
+  } catch (error: any) {
+    showToast(error.message || 'Erreur lors du retrait', 'error');
   }
 };

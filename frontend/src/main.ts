@@ -11,6 +11,7 @@ import { renderManagers } from './pages/managers';
 import { renderAssignments } from './pages/assignments';
 import { renderSales } from './pages/sales';
 import { renderLayout } from './components/layout';
+import { initChatWidget, destroyChatWidget } from './components/ChatWidget';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -23,6 +24,8 @@ function protectedRoute(handler: () => HTMLElement) {
     }
     const content = handler();
     renderLayout(app, content);
+    // Initialize chat widget for authenticated users (except SUPER_ADMIN)
+    setTimeout(() => initChatWidget(), 100);
   };
 }
 
@@ -39,6 +42,8 @@ function roleRoute(roles: string[], handler: () => HTMLElement) {
     }
     const content = handler();
     renderLayout(app, content);
+    // Initialize chat widget for authenticated users (except SUPER_ADMIN)
+    setTimeout(() => initChatWidget(), 100);
   };
 }
 
@@ -77,6 +82,10 @@ router
 
 // Listen for auth state changes
 store.subscribe(() => {
+  // Destroy chat widget on logout
+  if (!store.isAuthenticated()) {
+    destroyChatWidget();
+  }
   router.handleRoute();
 });
 
