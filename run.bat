@@ -5,6 +5,21 @@ echo    SellerGest - Demarrage des serveurs
 echo ========================================
 echo.
 
+:: Installation des dependances backend
+echo [*] Installation des dependances backend...
+cd /d %~dp0backend
+call npm i
+echo.
+
+:: Installation des dependances frontend
+echo [*] Installation des dependances frontend...
+cd /d %~dp0frontend
+call npm i
+echo.
+
+:: Retour a la racine
+cd /d %~dp0
+
 :: Lancer le backend dans une nouvelle fenetre
 echo [*] Demarrage du backend...
 start "SellerGest Backend" cmd /k "cd /d %~dp0backend && npm run dev"

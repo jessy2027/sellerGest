@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "email": "admin@sellergest.com",
+    "role": "SUPER_ADMIN"
+  },
+  {
+    "id": 2,
+    "email": "jessy.lange27@gmail.com",
+    "role": "MANAGER"
+  },
+  {
+    "id": 3,
+    "email": "lj063527@gmail.com",
+    "role": "SELLER"
+  }
+]
