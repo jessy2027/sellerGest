@@ -238,12 +238,17 @@ function renderProductsGrid(grid: HTMLElement) {
           </button>
           ` : ''}
           ` : isSeller && product.assignment_status === 'actif' ? `
-          <button class="btn btn-success btn-sm" onclick="markAsSold(${product.assignment_id})">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-            Vendre
-          </button>
+          <div class="seller-actions-row">
+            <button class="btn btn-success btn-sm btn-block" onclick="markAsSold(${product.assignment_id})" ${product.stock_quantity <= 0 ? 'disabled' : ''}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              ${product.stock_quantity > 0 ? 'Vendre (1)' : 'Épuisé'}
+            </button>
+            <div class="stock-urgency-label">
+                ⚠️ Stock partagé: <strong>${product.stock_quantity}</strong> restants
+            </div>
+          </div>
           ` : `
           <span class="product-sold-label">
             ${product.assignment_status === 'retiré' ? 'Retiré' : 'Actif'}

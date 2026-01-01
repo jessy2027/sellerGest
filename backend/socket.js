@@ -1,7 +1,7 @@
 // Socket.io server configuration with JWT authentication
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { Message, Conversation, User } = require('./models');
+const { Message, Conversation, User, Manager, Seller } = require('./models');
 
 let io;
 
@@ -37,6 +37,10 @@ function initSocket(httpServer) {
     io.on('connection', (socket) => {
         console.log(`🔌 User connected: ${socket.user.email}`);
 
+        // Join user specific room for private notifications
+        const userRoom = `user_${socket.user.id}`;
+        socket.join(userRoom);
+
         // Rejoindre une conversation
         socket.on('join_conversation', (conversationId) => {
             socket.join(`conversation_${conversationId}`);
@@ -54,7 +58,14 @@ function initSocket(httpServer) {
                 const { conversation_id, content } = data;
 
                 // Vérifier que l'utilisateur fait partie de cette conversation
-                const conversation = await Conversation.findByPk(conversation_id);
+                // On inclut Manager et Seller pour trouver l'ID de l'AUTRE utilisateur
+                const conversation = await Conversation.findByPk(conversation_id, {
+                    include: [
+                        { model: Manager, include: [{ model: User, attributes: ['id'] }] },
+                        { model: Seller, include: [{ model: User, attributes: ['id'] }] }
+                    ]
+                });
+
                 if (!conversation) {
                     socket.emit('error', { message: 'Conversation non trouvée' });
                     return;
@@ -76,15 +87,30 @@ function initSocket(httpServer) {
                     include: [{ model: User, as: 'Sender', attributes: ['id', 'email'] }]
                 });
 
-                // Envoyer à tous les membres de la conversation
+                // Envoyer à tous les membres de la conversation (ceux qui ont la fenêtre ouverte)
                 io.to(`conversation_${conversation_id}`).emit('new_message', fullMessage);
 
-                // Notifier les utilisateurs hors de la conversation
-                io.emit('message_notification', {
-                    conversation_id,
-                    sender: socket.user.email,
-                    preview: content.substring(0, 50)
-                });
+                // Identifier le destinataire pour la notification
+                let recipientUserId;
+                // Si l'envoyeur est le manager, le destinataire est le vendeur
+                if (socket.user.role === 'MANAGER') {
+                    // Vérifions si c'est bien sa conversation
+                    // (Simplification : on suppose que le middleware auth a fait sont job, 
+                    // mais ici on a besoin de l'ID du vendeur)
+                    recipientUserId = conversation.Seller?.User?.id;
+                } else {
+                    // Si l'envoyeur est le vendeur, le destinataire est le manager
+                    recipientUserId = conversation.Manager?.User?.id;
+                }
+
+                if (recipientUserId) {
+                    // Notifier le destinataire uniquement via sa room privée
+                    io.to(`user_${recipientUserId}`).emit('message_notification', {
+                        conversation_id,
+                        sender: socket.user.email,
+                        preview: content.substring(0, 50)
+                    });
+                }
 
             } catch (err) {
                 console.error('Send message error:', err);
@@ -96,13 +122,15 @@ function initSocket(httpServer) {
         socket.on('typing', (data) => {
             socket.to(`conversation_${data.conversation_id}`).emit('user_typing', {
                 user_id: socket.user.id,
-                email: socket.user.email
+                email: socket.user.email,
+                conversation_id: data.conversation_id
             });
         });
 
         socket.on('stop_typing', (data) => {
             socket.to(`conversation_${data.conversation_id}`).emit('user_stop_typing', {
-                user_id: socket.user.id
+                user_id: socket.user.id,
+                conversation_id: data.conversation_id
             });
         });
 

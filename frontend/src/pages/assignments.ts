@@ -162,6 +162,11 @@ function renderAssignmentsTable(container: HTMLElement) {
             <td><strong>${parseFloat(String(a.Product?.base_price || 0)).toFixed(2)}€</strong></td>
             <td>
               <span class="status-badge ${a.status}">${getStatusLabel(a.status)}</span>
+              ${isSeller && a.status === 'actif' && a.Product ? `
+                <div class="stock-warning-badge" title="Stock partagé avec d'autres vendeurs">
+                   ⚡ Stock global: ${calculateStock(a.Product)}
+                </div>
+              ` : ''}
             </td>
             <td>${a.assigned_at ? formatDate(a.assigned_at) : '-'}</td>
             <td>
@@ -209,6 +214,17 @@ function getStatusLabel(status: string): string {
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function calculateStock(product: any): string {
+  // Note: The backend should ideally send 'available_stock' directly on the product object in the list
+  // If not, we rely on what we have. For now, let's assume stock_quantity is the total.
+  // Ideally we need 'available = stock - sold'.
+  // Since the standard Product object in this list might not have 'sold_count', 
+  // we might need to rely on the fact that if it's 'actif', there is likely stock.
+  // IMPROVEMENT: Frontend doesn't receive real-time 'remaining' count for assignments list easily without extra queries.
+  // For now, let's display the TOTAL stock to indicate scale.
+  return String(product.stock_quantity || '?');
 }
 
 function filterAssignments() {

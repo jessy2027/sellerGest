@@ -13,6 +13,7 @@ let currentConversationId: number | null = null;
 let conversations: Conversation[] = [];
 let messages: Message[] = [];
 let unreadCount = 0;
+let typingTimeout: any = null;
 
 export function initChatWidget() {
     const user = store.getUser();
@@ -54,6 +55,9 @@ function createWidgetHTML() {
             Retour
           </button>
           <div class="messages-list" id="messages-list"></div>
+          <div class="typing-indicator" id="typing-indicator" style="display: none;">
+             <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          </div>
           <form class="message-form" id="message-form">
             <input type="text" id="message-input" placeholder="Tapez votre message..." autocomplete="off">
             <button type="submit" class="btn btn-primary btn-sm">
@@ -74,6 +78,22 @@ function createWidgetHTML() {
     document.getElementById('chat-close')?.addEventListener('click', closeChat);
     document.getElementById('chat-back')?.addEventListener('click', showConversations);
     document.getElementById('message-form')?.addEventListener('submit', sendMessage);
+
+    // Typing listener
+    const input = document.getElementById('message-input') as HTMLInputElement;
+    input?.addEventListener('input', handleTyping);
+}
+
+function handleTyping() {
+    if (!currentConversationId) return;
+
+    socket?.emit('typing', { conversation_id: currentConversationId });
+
+    if (typingTimeout) clearTimeout(typingTimeout);
+
+    typingTimeout = setTimeout(() => {
+        socket?.emit('stop_typing', { conversation_id: currentConversationId });
+    }, 2000);
 }
 
 function connectSocket() {
@@ -93,28 +113,47 @@ function connectSocket() {
             messages.push(message);
             renderMessages();
             scrollToBottom();
+
+            // Hide typing indicator when message received
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.style.display = 'none';
         }
         updateUnreadBadge();
     });
 
     socket.on('message_notification', (data) => {
+        // Notifications are now private, so we can trust they are for us
         if (!isOpen || currentConversationId !== data.conversation_id) {
             unreadCount++;
             updateBadge();
+            showToast(`Nouveau message de ${data.sender}`, 'info');
         }
     });
 
-    // Écouter les mises à jour de stock en temps réel
-    socket.on('stock_updated', (data: { product_id: number; new_stock: number; product_status?: string; action?: string }) => {
-        console.log('📦 Stock updated:', data);
-
-        // Afficher une notification toast
-        const action = data.action === 'restock' ? 'restocké' : 'vendu';
-        showToast(`Stock mis à jour (${action}) - ${data.new_stock} restant(s)`, 'info');
-
-        // Déclencher un événement personnalisé pour que les pages puissent écouter
-        window.dispatchEvent(new CustomEvent('stock-updated', { detail: data }));
+    socket.on('user_typing', (data) => {
+        if (currentConversationId === data.conversation_id) {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) {
+                indicator.style.display = 'flex';
+                indicator.title = `${data.email} écrit...`;
+            }
+            scrollToBottom();
+        }
     });
+
+    socket.on('user_stop_typing', (data) => {
+        if (currentConversationId === data.conversation_id) {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.style.display = 'none';
+        }
+    });
+
+    socket.on('error', (err: any) => {
+        console.error('Socket error:', err);
+        showToast(err.message || 'Erreur de connexion chat', 'error');
+    });
+
+
 
     socket.on('disconnect', () => {
         console.log('🔌 Chat disconnected');
@@ -145,9 +184,11 @@ function renderConversations() {
       <div class="chat-empty">
         <p>${isManager ? 'Sélectionnez un vendeur pour démarrer une conversation' : 'Aucune conversation'}</p>
         ${isManager ? '<button class="btn btn-primary btn-sm" id="new-chat-btn">Nouvelle conversation</button>' : ''}
+        ${!isManager && user?.role === 'SELLER' ? '<button class="btn btn-primary btn-sm" id="contact-manager-btn">Contacter mon Manager</button>' : ''}
       </div>
     `;
         document.getElementById('new-chat-btn')?.addEventListener('click', showNewChatModal);
+        document.getElementById('contact-manager-btn')?.addEventListener('click', startChatWithManager);
         return;
     }
 
@@ -160,7 +201,7 @@ function renderConversations() {
       <div class="conversation-item ${unread > 0 ? 'unread' : ''}" data-id="${conv.id}">
         <div class="conversation-avatar">${otherUser?.charAt(0).toUpperCase() || '?'}</div>
         <div class="conversation-info">
-          <span class="conversation-name">${otherUser || 'Utilisateur'}</span>
+          <span class="conversation-name">${otherUser || 'Manager'}</span>
           <span class="conversation-preview">${lastMessage?.content?.substring(0, 30) || 'Pas de message'}...</span>
         </div>
         ${unread > 0 ? `<span class="conversation-badge">${unread}</span>` : ''}
@@ -175,6 +216,16 @@ function renderConversations() {
             openConversation(id);
         });
     });
+}
+
+async function startChatWithManager() {
+    try {
+        const conversation = await api.createConversation();
+        await loadConversations();
+        openConversation(conversation.id);
+    } catch (error: any) {
+        showToast(error.message || 'Erreur', 'error');
+    }
 }
 
 async function openConversation(conversationId: number) {
@@ -249,6 +300,10 @@ async function sendMessage(e: Event) {
 
     input.value = '';
 
+    // Stop typing immediately
+    socket?.emit('stop_typing', { conversation_id: currentConversationId });
+    if (typingTimeout) clearTimeout(typingTimeout);
+
     // Send via socket for real-time
     socket?.emit('send_message', {
         conversation_id: currentConversationId,
@@ -264,6 +319,10 @@ function showConversations() {
     document.getElementById('chat-messages')!.style.display = 'none';
     document.getElementById('chat-conversations')!.style.display = 'block';
     document.getElementById('chat-title')!.textContent = 'Messages';
+
+    const indicator = document.getElementById('typing-indicator');
+    if (indicator) indicator.style.display = 'none';
+
     loadConversations();
 }
 

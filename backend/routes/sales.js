@@ -1,5 +1,6 @@
 const express = require('express');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { sequelize } = require('../config/db'); // Needed for transactions
 const { Sale, ProductAssignment, Product, Seller, Manager, User } = require('../models');
 const { Op } = require('sequelize');
 const { getIO } = require('../socket');
@@ -46,53 +47,81 @@ router.get('/', async (req, res) => {
 
 // POST /sales - Marquer un produit comme vendu (SELLER)
 // Le vendeur marque sa vente, une transaction en attente est créée
+// POST /sales - Marquer un produit comme vendu (SELLER)
+// Le vendeur marque sa vente, une transaction en attente est créée
 router.post('/', requireRole('SELLER'), async (req, res) => {
+    const t = await sequelize.transaction();
     try {
-        const seller = await Seller.findOne({ where: { user_id: req.user.id } });
-        if (!seller) return res.status(404).json({ error: 'Vendeur non trouvé' });
-        if (!seller.active) return res.status(403).json({ error: 'Compte vendeur désactivé' });
+        const seller = await Seller.findOne({ where: { user_id: req.user.id }, transaction: t });
+        if (!seller) {
+            await t.rollback();
+            return res.status(404).json({ error: 'Vendeur non trouvé' });
+        }
+        if (!seller.active) {
+            await t.rollback();
+            return res.status(403).json({ error: 'Compte vendeur désactivé' });
+        }
 
         const { assignment_id } = req.body;
-        if (!assignment_id) return res.status(400).json({ error: 'assignment_id requis' });
+        if (!assignment_id) {
+            await t.rollback();
+            return res.status(400).json({ error: 'assignment_id requis' });
+        }
 
         // Vérifier l'assignation
         const assignment = await ProductAssignment.findByPk(assignment_id, {
-            include: [{ model: Product }]
+            include: [{ model: Product }],
+            transaction: t
         });
 
-        if (!assignment) return res.status(404).json({ error: 'Assignation non trouvée' });
+        if (!assignment) {
+            await t.rollback();
+            return res.status(404).json({ error: 'Assignation non trouvée' });
+        }
         if (assignment.seller_id !== seller.id) {
+            await t.rollback();
             return res.status(403).json({ error: 'Ce produit ne vous est pas assigné' });
         }
         if (assignment.status !== 'actif') {
+            await t.rollback();
             return res.status(400).json({ error: 'Ce produit n\'est plus disponible à la vente (statut: ' + assignment.status + ')' });
         }
 
-        // Vérifier le stock disponible en comptant les ventes existantes
         const product = assignment.Product;
-        const soldSalesCount = await Sale.count({
-            where: {
-                assignment_id: {
-                    [Op.in]: await ProductAssignment.findAll({
-                        where: { product_id: product.id },
-                        attributes: ['id']
-                    }).then(assignments => assignments.map(a => a.id))
-                },
-                status: { [Op.ne]: 'cancelled' }
-            }
+
+        // LOCK: Verrouiller le produit pour être sûr du stock
+        // On recharge le produit avec un lock pour empêcher les race conditions
+        const lockedProduct = await Product.findByPk(product.id, {
+            transaction: t,
+            lock: true // Pessimistic lock
         });
 
-        if (soldSalesCount >= product.stock_quantity) {
+        // Compter les ventes valides existantes (hors annulées)
+        // Note: On peut aussi utiliser lockedProduct.stock_quantity si on décrémente directement le stock (mais ici on compte les ventes)
+        // Pour être sûr, on recompte les ventes associées aux assignations de ce produit
+
+        // Optimisation: On compte le nombre total de ventes 'pending' ou 'paid' liées à ce produit
+        // 1. Trouver toutes les assignations de ce produit
+        const productAssignments = await ProductAssignment.findAll({
+            where: { product_id: lockedProduct.id },
+            attributes: ['id'],
+            transaction: t
+        });
+        const assignmentIds = productAssignments.map(a => a.id);
+
+        // Check remaining stock directly
+        if (lockedProduct.stock_quantity <= 0) {
+            await t.rollback();
             return res.status(400).json({
-                error: 'Stock épuisé ! Il n\'y a plus d\'articles disponibles à vendre pour ce produit.'
+                error: 'Stock épuisé ! Trop tard, le dernier article vient d\'être vendu.'
             });
         }
 
         // Récupérer le manager
-        const manager = await Manager.findByPk(product.manager_id);
+        const manager = await Manager.findByPk(lockedProduct.manager_id, { transaction: t });
 
         // Calculer les montants
-        const productPrice = parseFloat(product.base_price);
+        const productPrice = parseFloat(lockedProduct.base_price);
         const commissionRate = parseFloat(seller.commission_rate) || 15;
         const sellerCommission = (productPrice * commissionRate) / 100;
         const amountToManager = productPrice - sellerCommission;
@@ -107,28 +136,32 @@ router.post('/', requireRole('SELLER'), async (req, res) => {
             amount_to_manager: amountToManager,
             status: 'pending',
             sold_at: new Date()
-        });
+        }, { transaction: t });
 
-        // Mettre à jour l'assignation (On laisse 'en_vente' pour permettre d'autres ventes)
-        // assignment.status = 'vendu'; // On ne change plus le statut ici
-        assignment.sold_at = new Date(); // Optionnel: garde la trace de la dernière vente
-        await assignment.save();
+        // Decrement actual stock in DB
+        lockedProduct.stock_quantity = lockedProduct.stock_quantity - 1;
 
-        // Mettre à jour le statut du produit seulement si tout le stock est épuisé
-        const newSoldCount = soldSalesCount + 1;
-        if (newSoldCount >= product.stock_quantity) {
-            product.status = 'vendu';
-            await product.save();
+        if (lockedProduct.stock_quantity <= 0) {
+            lockedProduct.stock_quantity = 0;
+            lockedProduct.status = 'vendu';
         }
 
-        // Émettre l'événement WebSocket pour mise à jour en temps réel
+        await lockedProduct.save({ transaction: t });
+
+        // Mettre à jour l'assignation
+        assignment.sold_at = new Date();
+        await assignment.save({ transaction: t });
+
+        await t.commit();
+
+        // Émettre l'événement WebSocket (hors transaction)
         try {
             const io = getIO();
             io.emit('stock_updated', {
-                product_id: product.id,
-                new_stock: product.stock_quantity - newSoldCount,
-                sold_count: newSoldCount,
-                product_status: product.status
+                product_id: lockedProduct.id,
+                new_stock: lockedProduct.stock_quantity,
+                sold_count: null, // No longer tracked relative to total here
+                product_status: lockedProduct.status
             });
         } catch (socketErr) {
             console.error('Socket emit error:', socketErr.message);
@@ -136,10 +169,11 @@ router.post('/', requireRole('SELLER'), async (req, res) => {
 
         return res.status(201).json({
             ...sale.toJSON(),
-            product_title: product.title,
+            product_title: lockedProduct.title,
             message: `Vente enregistrée ! Vous devez payer ${amountToManager.toFixed(2)}€ au manager. Votre commission: ${sellerCommission.toFixed(2)}€`
         });
     } catch (err) {
+        await t.rollback();
         console.error('Create sale error:', err.message);
         return res.status(500).json({ error: 'Échec de l\'enregistrement de la vente' });
     }

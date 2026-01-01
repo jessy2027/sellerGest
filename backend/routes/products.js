@@ -280,11 +280,14 @@ router.get('/:id/stock', async (req, res) => {
             where: { product_id: product.id, status: 'actif' }
         });
 
+        // NOTE: stock_quantity is now the REMAINING stock
+        // soldCount keeps track of history
+
         return res.json({
-            total_stock: product.stock_quantity,
+            current_stock: product.stock_quantity,
             sold: soldCount,
             active_assignments: activeAssignmentsCount,
-            available: product.stock_quantity - soldCount
+            available: product.stock_quantity // Direct mapping
         });
     } catch (err) {
         console.error('Get product stock error:', err.message);

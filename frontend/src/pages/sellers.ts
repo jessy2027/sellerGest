@@ -20,10 +20,10 @@ let sellersData: Seller[] = [];
 export function renderSellers(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'sellers-page';
-  
+
   const role = store.getRole();
   const isManager = role === 'MANAGER';
-  
+
   container.innerHTML = `
     <header class="page-header">
       <div class="page-header-content">
@@ -66,21 +66,21 @@ export function renderSellers(): HTMLElement {
       </div>
     </div>
   `;
-  
+
   // Charger les vendeurs
   setTimeout(() => loadSellers(), 0);
-  
+
   // Event listeners
   setTimeout(() => {
     const searchInput = document.getElementById('search-input') as HTMLInputElement;
     searchInput?.addEventListener('input', (e) => {
       filterSellers((e.target as HTMLInputElement).value);
     });
-    
+
     const addBtn = document.getElementById('add-seller-btn');
     addBtn?.addEventListener('click', () => openCreateSellerModal());
   }, 0);
-  
+
   return container;
 }
 
@@ -158,6 +158,12 @@ function renderSellersGrid(grid: HTMLElement) {
         ` : ''}
       </div>
       <div class="seller-actions">
+        <button class="btn btn-ghost btn-sm" onclick="startSellerChat(${seller.id})">
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+           </svg>
+           Message
+        </button>
         <button class="btn btn-ghost btn-sm" onclick="editSeller(${seller.id})">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -166,7 +172,7 @@ function renderSellersGrid(grid: HTMLElement) {
           Modifier
         </button>
         ${isManager ? `
-        <button class="btn btn-ghost btn-sm btn-danger" onclick="deleteSeller(${seller.id})">
+        <button class="btn btn-ghost btn-danger btn-sm" onclick="deleteSeller(${seller.id})">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -215,24 +221,24 @@ function openCreateSellerModal() {
       </div>
     </form>
   `;
-  
+
   const modal = createModal('Nouveau Vendeur', content);
   document.body.appendChild(modal);
-  
+
   const form = document.getElementById('create-seller-form') as HTMLFormElement;
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    
+
     const formData = new FormData(form);
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
     const vinted_profile = formData.get('vinted') as string || undefined;
     const commission_rate = parseFloat(formData.get('commission') as string) || 15;
-    
+
     const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span class="spinner-small"></span> Création...';
-    
+
     try {
       await api.createSeller({ email, password, vinted_profile, commission_rate });
       showToast('Vendeur créé avec succès !', 'success');
@@ -247,6 +253,12 @@ function openCreateSellerModal() {
 }
 
 // Global functions
+(window as any).startSellerChat = async (id: number) => {
+  // Dynamically import to avoid circular dependencies if any, or just use the imported function
+  const { startChatWithSeller } = await import('../components/ChatWidget');
+  startChatWithSeller(id);
+};
+
 (window as any).editSeller = (id: number) => {
   const seller = sellersData.find(s => s.id === id);
   if (!seller) return;
@@ -267,18 +279,18 @@ function openCreateSellerModal() {
       </div>
     </form>
   `;
-  
+
   const modal = createModal('Modifier le vendeur', content);
   document.body.appendChild(modal);
-  
+
   const form = document.getElementById('seller-form') as HTMLFormElement;
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    
+
     const formData = new FormData(form);
     const vinted_profile = formData.get('vinted') as string;
     const commission_rate = parseFloat(formData.get('commission') as string);
-    
+
     try {
       await api.updateSeller(id, { vinted_profile, commission_rate });
       showToast('Vendeur mis à jour !', 'success');

@@ -12,6 +12,7 @@ import { renderAssignments } from './pages/assignments';
 import { renderSales } from './pages/sales';
 import { renderLayout } from './components/layout';
 import { initChatWidget, destroyChatWidget } from './components/ChatWidget';
+import { initSocket, disconnectSocket } from './socket';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -24,6 +25,7 @@ function protectedRoute(handler: () => HTMLElement) {
     }
     const content = handler();
     renderLayout(app, content);
+    initSocket();
     // Initialize chat widget for authenticated users (except SUPER_ADMIN)
     setTimeout(() => initChatWidget(), 100);
   };
@@ -42,6 +44,7 @@ function roleRoute(roles: string[], handler: () => HTMLElement) {
     }
     const content = handler();
     renderLayout(app, content);
+    initSocket();
     // Initialize chat widget for authenticated users (except SUPER_ADMIN)
     setTimeout(() => initChatWidget(), 100);
   };
@@ -81,10 +84,15 @@ router
   .start();
 
 // Listen for auth state changes
+// Listen for auth state changes
 store.subscribe(() => {
-  // Destroy chat widget on logout
+  // Destroy chat widget and socket on logout
   if (!store.isAuthenticated()) {
     destroyChatWidget();
+    disconnectSocket();
+  } else {
+    // Ensure socket is connected if logged in
+    initSocket();
   }
   router.handleRoute();
 });
